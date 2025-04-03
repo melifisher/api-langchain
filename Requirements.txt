@@ -1,0 +1,3 @@
+pip install langchain openai tiktoken
+
+pip install langchain-community langchain-chroma langchain-openai langchain-text-splitters
