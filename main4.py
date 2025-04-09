@@ -94,7 +94,6 @@ class RAGSystem:
             persist_directory=self.persist_dir
         )
         
-        # Save the current hash
         with open(hash_file_path, "w") as f:
             f.write(current_hash)
             
@@ -184,13 +183,13 @@ def search_api():
             }), 400
             
         query = data["query"]
-        k = data.get("k", 2)  # Number of results, default is 2
+        k = data.get("k", 2) 
         
         # Ensure RAG system is initialized
         if not rag_system.vectorstore:
             rag_system.initialize()
         
-        # Perform search
+        
         results = rag_system.search(query, k=k)
         
         return jsonify({
