@@ -12,6 +12,8 @@ from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 
+from filtro import filtro_palabras
+
 # Load environment variables
 load_dotenv()
 
@@ -126,7 +128,7 @@ CORS(app)  # Enable CORS for Flutter integration
 
 # Default configuration
 CONFIG = {
-    "FILE_PATH": os.getenv("RAG_FILE_PATH", "datos.txt"),
+    "FILE_PATH": os.getenv("RAG_FILE_PATH", "datoscompletos.txt"),
     "PERSIST_DIR": os.getenv("RAG_PERSIST_DIR", "chroma_db"),
     "CHUNK_SIZE": int(os.getenv("RAG_CHUNK_SIZE", "500")),
     "CHUNK_OVERLAP": int(os.getenv("RAG_CHUNK_OVERLAP", "50")),
@@ -177,6 +179,7 @@ def search_api():
     try:
         data = request.get_json()
         
+        
         if not data or "query" not in data:
             return jsonify({
                 "status": "error",
@@ -185,6 +188,11 @@ def search_api():
             
         query = data["query"]
         k = data.get("k", 2)  # Number of results, default is 2
+
+         
+        reemplazador  = filtro_palabras()
+        query = reemplazador.reemplazar_palabras(query)   
+      
         
         # Ensure RAG system is initialized
         if not rag_system.vectorstore:
