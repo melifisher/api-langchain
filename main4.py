@@ -12,6 +12,7 @@ from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 
+from langchain_openai import ChatOpenAI
 from filtro import filtro_palabras
 
 # Load environment variables
@@ -121,6 +122,35 @@ class RAGSystem:
             })
             
         return results
+    
+    def proces_data_result_openIA(self ,results: List[Dict[str, Any]], query: str):
+        llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
+        respuestas = []
+
+        # Combina todos los contenidos en un solo string
+        combined_content = "\n\n".join([item.get("content", "") for item in results])
+
+        # Crear el prompt con todos los contenidos juntos
+        prompt = f"""
+        Eres un experto en leyes de tránsito. con base en el siguiente texto:
+
+        \"\"\"{combined_content}\"\"\"
+
+        Responde a la siguiente pregunta del usuario, solo dame  la respuesta:
+
+        \"{query}\"
+         Instrucciones adicionales:
+        1. Responde solo con hechos basados en la información proporcionada
+        2. Mantén un tono profesional
+        3. Limita tu respuesta a 150 palabras máximo
+        
+        """
+        logger.info(f"Pront enviado : {prompt} ")
+        respuesta = llm.invoke(prompt)
+        respuestas.append(respuesta.content)
+        #logger.info(respuestas) #muestra el resultado de la espuesta
+        return respuestas
+    
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -200,12 +230,13 @@ def search_api():
         
         # Perform search
         results = rag_system.search(query, k=k)
-        
+        resultsprocess = rag_system.proces_data_result_openIA(results,query)
         return jsonify({
             "status": "success",
             "query": query,
             "results": results,
-            "result_count": len(results)
+            "result_count": len(results),
+            "processIA":resultsprocess,
         })
     except Exception as e:
         logger.error(f"Search error: {str(e)}")
