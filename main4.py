@@ -143,9 +143,10 @@ class RAGSystem:
         1. Responde solo con hechos basados en la información proporcionada
         2. Mantén un tono profesional
         3. Limita tu respuesta a 150 palabras máximo
+        4. Si tiene Articulo en parentesis nombra al articulo
         
         """
-        logger.info(f"Pront enviado : {prompt} ")
+        #logger.info(f"Pront enviado : {prompt} ")
         respuesta = llm.invoke(prompt)
         respuestas.append(respuesta.content)
         #logger.info(respuestas) #muestra el resultado de la espuesta
