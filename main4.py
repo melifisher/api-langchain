@@ -263,7 +263,7 @@ class RAGSystem:
 
         # Crear el prompt con todos los contenidos juntos y el feedback
         prompt = f"""
-        Eres un experto en leyes de tránsito con base en el siguiente texto:
+        Actua como un experto en leyes de tránsito con base en el siguiente texto, el cual es sacado de documentos de leyes de transito de Bolivia:
 
         \"\"\"{combined_content}\"\"\"
 
@@ -272,7 +272,7 @@ class RAGSystem:
         \"{query}\"
          
         Instrucciones adicionales:
-        1. Responde con hechos basados en la información proporcionada, pero al responder No meciones que te la proporcionamos, por favor
+        1. Responde con hechos basados en la información proporcionada
         2. Mantén un tono profesional
         3. Limita tu respuesta a 150 palabras máximo
         4. Si tiene Articulo, nombralo
@@ -355,10 +355,10 @@ def search_api():
             }), 400
             
         query = data["query"]
-        k = data.get("k", 2) 
+        k = data.get("k", 5) 
 
         reemplazador = filtro_palabras()
-        query = reemplazador.reemplazar_palabras(query)   
+        queryFiltrado = reemplazador.reemplazar_palabras(query)   
       
         # Ensure RAG system is initialized
         if not rag_system.vectorstore:
@@ -368,7 +368,7 @@ def search_api():
         response_id = hashlib.md5(f"{query}-{time.time()}".encode()).hexdigest()
         
         # Perform search
-        results = rag_system.search(query, k=k)
+        results = rag_system.search(queryFiltrado, k=k)
         response_content = rag_system.proces_data_result_openIA(results, query)
         
         return jsonify({
