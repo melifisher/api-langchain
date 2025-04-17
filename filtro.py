@@ -18,13 +18,12 @@ class filtro_palabras:
             'pase de conducir': 'licencia de conducir',
 
             # Formas de decir "policías"
-             'paco': 'policía',
+            'paco': 'policía',
             'policia': 'policía',
             'canas': 'policía',
             'yuta': 'policía',
             'tombos': 'policía',
             'oficial': 'policía',
-            #'cerdo' : 'policia',
             'agente de tránsito': 'policía',
 
             # Formas de decir "accidente / choque"
