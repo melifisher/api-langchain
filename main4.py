@@ -206,7 +206,6 @@ class RAGSystem:
             persist_directory=self.persist_dir
         )
         
-        # Save the current hash
         with open(hash_file_path, "w") as f:
             f.write(current_hash)
             
