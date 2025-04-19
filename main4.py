@@ -16,6 +16,9 @@ from langchain_core.documents import Document
 
 from langchain_openai import ChatOpenAI
 from filtro import filtro_palabras
+from contextcache import ContextCache
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 # Load environment variables
 load_dotenv()
@@ -230,6 +233,90 @@ class RAGSystem:
             })
             
         return results
+    def in_context(self,prev_question: str, new_question: str,answerfull :str ) -> bool:
+       
+        mensajes = [
+            SystemMessage(
+                content="Sos un clasificador que determina si una nueva pregunta está relacionada me refiero a que es una continuacion de la pregunta principal y su contexto. tambien te paso la Respuesta anterior completa. Respondé únicamente con \"Relacionado\" o \"Nuevo tema\"."
+            ),
+            HumanMessage(
+                content=f"""
+                Pregunta anterior o principal:\n“{prev_question}”\nNueva pregunta:\n“{new_question}”
+                
+                Respuesta anterior para verificar si sigue en el contexto: \n{ answerfull }
+                Instrucciones adicionales:
+                1. Responde basado en la Pregunta anterior comparandoral con la Nueva pregunta
+                2. te pase la Respuesta anterior para que veas si esta en el contexto tambien
+                3. Si ves que la nueva pregunta no esta entre las respuestas ,considera que no esta en el contexto
+                """
+                
+            )
+        ]
+
+        llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
+
+        respuesta = llm.invoke(mensajes)
+
+        print("→ Respuesta del modelo:", respuesta.content)
+        print(mensajes)
+
+        return "relacionado" in respuesta.content.lower()
+    def proces_data_result_openIA_Continue_Context(self, results: str, query: str, oldquery :str):
+        """Process the search results with OpenAI, incorporating feedback and Continue Context Using Old Anaswers of question Initial (lee fisher :U)."""
+        llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
+        
+        # Get similar feedback to influence the response
+        similar_feedback = self.feedback_db.get_similar_feedback(query)
+        feedback_guidance = ""
+        
+        if similar_feedback:
+            # Extract learnings from previous feedback
+            high_rated_examples = [f for f in similar_feedback if f["rating"] >= 4]
+            low_rated_examples = [f for f in similar_feedback if f["rating"] <= 2]
+            
+            if high_rated_examples or low_rated_examples:
+                feedback_guidance = "Basado en feedback previo de usuarios:\n"
+                
+                if high_rated_examples:
+                    feedback_guidance += "Los usuarios prefieren respuestas que:\n"
+                    for ex in high_rated_examples[:2]:
+                        feedback_guidance += f"- Sean similares a: '{ex['response'][:100]}...'\n"
+                
+                if low_rated_examples:
+                    feedback_guidance += "Los usuarios NO prefieren respuestas que:\n"
+                    for ex in low_rated_examples[:2]:
+                        feedback_guidance += f"- Sean similares a: '{ex['response'][:100]}...'\n"
+        
+        # Combina todos los contenidos en un solo string
+        combined_content =  results
+
+        # Crear el prompt con todos los contenidos juntos y el feedback
+        prompt = f"""
+        Actua como un experto en leyes de tránsito con base en el siguiente texto, el cual es sacado de documentos de leyes de transito de Bolivia:
+
+        \"\"\"{combined_content}\"\"\"
+
+        Responde a la siguiente pregunta del usuario:
+
+        \"{oldquery}\"
+        
+        Basate en esta pregunta principal, de la cual depende la pregunta del usuario:
+
+        \"{query}\"
+         
+        Instrucciones adicionales:
+        1. Responde con hechos basados en la información proporcionada
+        2. Mantén un tono profesional
+        3. Limita tu respuesta a 150 palabras máximo
+        4. Si tiene Articulo, nombralo
+        5. Solo responde a la pregunta
+        6. La Pregunta es la continuacion al contexto de la pregunta principal
+        
+        {feedback_guidance}
+        """
+
+        respuesta = llm.invoke(prompt)
+        return respuesta.content
     
     def proces_data_result_openIA(self, results: List[Dict[str, Any]], query: str):
         """Process the search results with OpenAI, incorporating feedback."""
@@ -357,6 +444,8 @@ def search_api():
         k = data.get("k", 5) 
 
         reemplazador = filtro_palabras()
+        cache = ContextCache()
+        
         queryFiltrado = reemplazador.reemplazar_palabras(query)   
       
         # Ensure RAG system is initialized
@@ -367,8 +456,32 @@ def search_api():
         response_id = hashlib.md5(f"{query}-{time.time()}".encode()).hexdigest()
         
         # Perform search
-        results = rag_system.search(queryFiltrado, k=k)
-        response_content = rag_system.proces_data_result_openIA(results, query)
+        
+        # Combina todos los contenidos en un solo string
+        #combined_content = "\n\n".join([item.get("content", "") for item in results])
+        #cache.add_entry("user123", query , combined_content,response_content)
+
+
+        
+        ultimatequestion = cache.get_ultimate_question("user123")
+
+        anteriorrespuesta = cache.get_ultimate_answerfull("user123")
+        
+        incontext = rag_system.in_context(ultimatequestion,queryFiltrado , anteriorrespuesta)
+        
+        if  (ultimatequestion is not None) and ( anteriorrespuesta is not None) and incontext: 
+            response_content = rag_system.proces_data_result_openIA_Continue_Context( anteriorrespuesta , ultimatequestion , queryFiltrado)
+            logger.info(f"In Cache Answer ")
+            results =[]
+        else:
+            cache.clear_user_history("user123") #elimina la cache del contexto actual
+            results = rag_system.search(queryFiltrado, k=k)
+            response_content = rag_system.proces_data_result_openIA(results, query)
+            logger.info(f"From VectorDB Answer ")
+            combined_content = "\n\n".join([item.get("content", "") for item in results])
+            cache.add_entry("user123", query , combined_content,response_content) #inicia un nuevo contexto de pregunta 
+        
+        
         
         return jsonify({
             "status": "success",
