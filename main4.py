@@ -238,8 +238,8 @@ class RAGSystem:
        
         mensajes = [
             SystemMessage(
-                content="""Eres un clasificador. Determina si la nueva pregunta está relacionada con la pregunta anterior 
-                y si la respuesta a la nueva pregunta está contenida en la respuesta anterior.
+                content="""Eres un clasificador de una IA para saber si la pregunta sigue el contexto o no. Determina si la nueva pregunta podría estar relacionada con la pregunta anterior o
+                si es un nuevo tema. Tambien podrias basarte en si la respuesta a la nueva pregunta esta contenida en la respuesta anterior.
                 Responde únicamente con "Relacionado" o "Nuevo tema"."""
                         ),
             HumanMessage(
@@ -247,12 +247,14 @@ class RAGSystem:
                 Pregunta anterior o principal:\n“{prev_question}”\nNueva pregunta:\n“{new_question}”
                 
                 Respuesta anterior para verificar si sigue en el contexto: \n{ answerfull }
-                Instrucciones adicionales:
-                1. Responde basado en la Nueva pregunta , solo si la respuesta correcta esta ahi
-                2. te pase la Respuesta anterior para que veas si esta en el contexto tambien
-                3. Si ves que la respuesta a la nueva pregunta no esta entre las respuesta anterior ,considera que no esta en el contexto
-                """
                 
+                """
+                # Instrucciones adicionales:
+                # 1. Responde basado en la Nueva pregunta , solo si la respuesta correcta esta ahi
+                # 2. te pase la Respuesta anterior para que veas si esta en el contexto tambien
+                # 3. Si ves que la respuesta a la nueva pregunta no esta entre las respuesta anterior ,considera que no esta en el contexto
+                #                o si la respuesta a la nueva pregunta está contenida en la respuesta anterior.
+
             )
         ]
 
@@ -261,7 +263,7 @@ class RAGSystem:
         respuesta = llm.invoke(mensajes)
 
         print("→ Respuesta del modelo:", respuesta.content)
-        print(mensajes)
+        print(f"""Pregunta anterior o principal:\n“{prev_question}”\nNueva pregunta:\n“{new_question}”""")
 
         return "relacionado" in respuesta.content.lower()
     def get_similarity(self, text1: str, text2: str) -> float:
@@ -334,21 +336,21 @@ class RAGSystem:
         Actua como un experto en leyes de tránsito con base en el siguiente texto, el cual es sacado de documentos de leyes de transito de Bolivia:
 
         \"\"\"{combined_content}\"\"\"
-
+        
         Responde a la siguiente pregunta del usuario:
 
-        \"{oldquery}\"
-        
-        Basate en esta pregunta principal, de la cual depende la pregunta del usuario:
-
         \"{query}\"
+
+        Tomando en cuenta que esta era la anterior pregunta:
+
+        \"{oldquery}\"
          
         Instrucciones adicionales:
         1. Responde con hechos basados en la información proporcionada
         2. Mantén un tono profesional
         3. Limita tu respuesta a 150 palabras máximo
         4. Si tiene Articulo, nombralo
-        5. Solo responde a la pregunta
+        5. Solo responde a la pregunta del usuario
         6. La Pregunta es la continuacion al contexto de la pregunta principal
         
         {feedback_guidance}
@@ -506,13 +508,14 @@ def search_api():
 
 
         
-        incontext = rag_system.in_context(old_question,queryFiltrado , old_response_full)
+        incontext = rag_system.in_context(old_question,query , old_response_full)
         
         if  (hay_contexto) and incontext: 
             newquestioon = old_question + queryFiltrado
-            results = rag_system.search(newquestioon, k=k) # nuevos resutados de la pregunta principal conbinada con la nueva pregunta relacionada
+            results = rag_system.search(newquestioon, k=k+3) # nuevos resutados de la pregunta principal conbinada con la nueva pregunta relacionada
             combined_content = "\n\n".join([item.get("content", "") for item in results])
-            response_content = rag_system.proces_data_result_openIA_Continue_Context( combined_content , old_question , queryFiltrado)
+            print(combined_content)
+            response_content = rag_system.proces_data_result_openIA_Continue_Context( combined_content , old_question , query)
             logger.info(f"In Cache Answer ")
             results =[]
             newcontext=False
