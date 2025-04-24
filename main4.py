@@ -20,6 +20,7 @@ from contextcache import ContextCache
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 
+from sklearn.metrics.pairwise import cosine_similarity
 # Load environment variables
 load_dotenv()
 
@@ -237,17 +238,19 @@ class RAGSystem:
        
         mensajes = [
             SystemMessage(
-                content="Sos un clasificador que determina si una nueva pregunta está relacionada me refiero a que es una continuacion de la pregunta principal y su contexto. tambien te paso la Respuesta anterior completa. Respondé únicamente con \"Relacionado\" o \"Nuevo tema\"."
-            ),
+                content="""Eres un clasificador. Determina si la nueva pregunta está relacionada con la pregunta anterior 
+                y si la respuesta a la nueva pregunta está contenida en la respuesta anterior.
+                Responde únicamente con "Relacionado" o "Nuevo tema"."""
+                        ),
             HumanMessage(
                 content=f"""
                 Pregunta anterior o principal:\n“{prev_question}”\nNueva pregunta:\n“{new_question}”
                 
                 Respuesta anterior para verificar si sigue en el contexto: \n{ answerfull }
                 Instrucciones adicionales:
-                1. Responde basado en la Pregunta anterior comparandoral con la Nueva pregunta
+                1. Responde basado en la Nueva pregunta , solo si la respuesta correcta esta ahi
                 2. te pase la Respuesta anterior para que veas si esta en el contexto tambien
-                3. Si ves que la nueva pregunta no esta entre las respuestas ,considera que no esta en el contexto
+                3. Si ves que la respuesta a la nueva pregunta no esta entre las respuesta anterior ,considera que no esta en el contexto
                 """
                 
             )
@@ -261,6 +264,42 @@ class RAGSystem:
         print(mensajes)
 
         return "relacionado" in respuesta.content.lower()
+    def get_similarity(self, text1: str, text2: str) -> float:
+        """
+        Calcula la similitud coseno entre dos textos usando embeddings.
+        
+        """
+        model_name: str = "text-embedding-3-small",
+        
+        embedder = self.embeddings
+        emb1 = embedder.embed_query(text1)
+        emb2 = embedder.embed_query(text2)
+        return cosine_similarity([emb1], [emb2])[0][0]
+
+    def in_context_embeddings(self, prev_question: str, new_question: str, answerfull: str) -> bool:
+        """
+        Determina si una nueva pregunta está en contexto usando embeddings.
+        
+        Args:
+            prev_question: Pregunta anterior en la conversación
+            new_question: Nueva pregunta a evaluar
+            answerfull: Respuesta completa relacionada
+            
+        Returns:
+            bool: True si la nueva pregunta está en contexto
+        """
+        threshold: float = 0.8,
+        # Calcula similitudes
+        sim_questions = self.get_similarity(prev_question, new_question)
+        sim_new_to_answer = self.get_similarity(new_question, answerfull)
+        
+        # Puntuación combinada ponderada
+        weights = (0.6, 0.4)
+        combined_score = (weights[0] * sim_questions + 
+                         weights[1] * sim_new_to_answer)
+        
+        return combined_score >= threshold
+    
     def proces_data_result_openIA_Continue_Context(self, results: str, query: str, oldquery :str):
         """Process the search results with OpenAI, incorporating feedback and Continue Context Using Old Anaswers of question Initial (lee fisher :U)."""
         llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
@@ -442,10 +481,14 @@ def search_api():
             
         query = data["query"]
         k = data.get("k", 5) 
+        old_question = data.get("oldquestion", "").strip()
+        old_response_full = data.get("oldresponsefull", "").strip()
+        hay_contexto = bool(old_question) and bool(old_response_full)
+
 
         reemplazador = filtro_palabras()
         cache = ContextCache()
-        
+        newcontext=True
         queryFiltrado = reemplazador.reemplazar_palabras(query)   
       
         # Ensure RAG system is initialized
@@ -463,23 +506,24 @@ def search_api():
 
 
         
-        ultimatequestion = cache.get_ultimate_question("user123")
-
-        anteriorrespuesta = cache.get_ultimate_answerfull("user123")
+        incontext = rag_system.in_context(old_question,queryFiltrado , old_response_full)
         
-        incontext = rag_system.in_context(ultimatequestion,queryFiltrado , anteriorrespuesta)
-        
-        if  (ultimatequestion is not None) and ( anteriorrespuesta is not None) and incontext: 
-            response_content = rag_system.proces_data_result_openIA_Continue_Context( anteriorrespuesta , ultimatequestion , queryFiltrado)
+        if  (hay_contexto) and incontext: 
+            newquestioon = old_question + queryFiltrado
+            results = rag_system.search(newquestioon, k=k) # nuevos resutados de la pregunta principal conbinada con la nueva pregunta relacionada
+            combined_content = "\n\n".join([item.get("content", "") for item in results])
+            response_content = rag_system.proces_data_result_openIA_Continue_Context( combined_content , old_question , queryFiltrado)
             logger.info(f"In Cache Answer ")
             results =[]
+            newcontext=False
         else:
-            cache.clear_user_history("user123") #elimina la cache del contexto actual
+            #cache.clear_user_history("user123") #elimina la cache del contexto actual
             results = rag_system.search(queryFiltrado, k=k)
             response_content = rag_system.proces_data_result_openIA(results, query)
             logger.info(f"From VectorDB Answer ")
-            combined_content = "\n\n".join([item.get("content", "") for item in results])
-            cache.add_entry("user123", query , combined_content,response_content) #inicia un nuevo contexto de pregunta 
+            #combined_content = "\n\n".join([item.get("content", "") for item in results])
+            #cache.add_entry("user123", query , combined_content,response_content) #inicia un nuevo contexto de pregunta 
+            newcontext=True
         
         
         
@@ -489,7 +533,8 @@ def search_api():
             "results": results,
             "result_count": len(results),
             "response": response_content,
-            "response_id": response_id
+            "response_id": response_id,
+            "isnewcontext":newcontext,
         })
     except Exception as e:
         logger.error(f"Search error: {str(e)}")
