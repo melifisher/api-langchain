@@ -234,7 +234,7 @@ class RAGSystem:
             })
             
         return results
-    def in_context(self,prev_question: str, new_question: str,answerfull :str ) -> bool:
+    def in_context(self,prev_question: str, new_question: str,answerfull :str ,formatted_history : str) -> bool:
        
         mensajes = [
             SystemMessage(
@@ -247,6 +247,14 @@ class RAGSystem:
                 Pregunta anterior o principal:\n“{prev_question}”\nNueva pregunta:\n“{new_question}”
                 
                 Respuesta anterior para verificar si sigue en el contexto: \n{ answerfull }
+                Instrucciones adicionales:
+                1. Responde basado en la Nueva pregunta , solo si la respuesta correcta esta ahi
+                2. te pase la Respuesta anterior para que veas si esta en el contexto tambien
+                3. Si ves que la respuesta a la nueva pregunta no esta entre las respuesta anterior ,considera que no esta en el contexto
+                4. si es necesario Basa tu respuesta en este contexto previo, si se aleja mucho tomalo como Nuevo tema 
+        
+                 Contexto previo:\n{formatted_history}
+        
                 
                 """
                 # Instrucciones adicionales:
@@ -302,7 +310,7 @@ class RAGSystem:
         
         return combined_score >= threshold
     
-    def proces_data_result_openIA_Continue_Context(self, results: str, query: str, oldquery :str):
+    def proces_data_result_openIA_Continue_Context(self, results: str, query: str, oldquery :str, formatted_history : str):
         """Process the search results with OpenAI, incorporating feedback and Continue Context Using Old Anaswers of question Initial (lee fisher :U)."""
         llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
         
@@ -352,6 +360,9 @@ class RAGSystem:
         4. Si tiene Articulo, nombralo
         5. Solo responde a la pregunta del usuario
         6. La Pregunta es la continuacion al contexto de la pregunta principal
+        7. si es necesario Basa tu respuesta en este contexto previo 
+        
+        Contexto previo:\n{formatted_history}
         
         {feedback_guidance}
         """
@@ -475,6 +486,8 @@ def search_api():
     try:
         data = request.get_json()
         
+        print(data)
+        
         if not data or "query" not in data:
             return jsonify({
                 "status": "error",
@@ -486,6 +499,9 @@ def search_api():
         old_question = data.get("oldquestion", "").strip()
         old_response_full = data.get("oldresponsefull", "").strip()
         hay_contexto = bool(old_question) and bool(old_response_full)
+        
+        history = data.get("summaries", [])
+        formatted_history = "\n \n".join(history)
 
 
         reemplazador = filtro_palabras()
@@ -508,14 +524,13 @@ def search_api():
 
 
         
-        incontext = rag_system.in_context(old_question,query , old_response_full)
+        incontext = rag_system.in_context(old_question,queryFiltrado , old_response_full,formatted_history)
         
         if  (hay_contexto) and incontext: 
             newquestioon = old_question + queryFiltrado
             results = rag_system.search(newquestioon, k=k+3) # nuevos resutados de la pregunta principal conbinada con la nueva pregunta relacionada
             combined_content = "\n\n".join([item.get("content", "") for item in results])
-            print(combined_content)
-            response_content = rag_system.proces_data_result_openIA_Continue_Context( combined_content , old_question , query)
+            response_content = rag_system.proces_data_result_openIA_Continue_Context( combined_content , old_question , queryFiltrado,formatted_history)
             logger.info(f"In Cache Answer ")
             results =[]
             newcontext=False
