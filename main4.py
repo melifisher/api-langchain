@@ -20,6 +20,10 @@ from feedback import FeedbackDB
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 
+import chromadb
+from chromadb.config import Settings
+import numpy as np
+
 from sklearn.metrics.pairwise import cosine_similarity
 # Load environment variables
 load_dotenv()
@@ -632,6 +636,96 @@ def analyze_feedback_periodically():
     except Exception as e:
         logger.error(f"Error en análisis periódico: {str(e)}")
 
+
+# Add this endpoint to your existing Flask application
+
+@app.route('/api/export_fragments/<collection_name>', methods=['GET'])
+def export_fragments(collection_name: str):
+    """
+    Export document fragments with their embeddings for a specific collection.
+    This endpoint allows the Flutter app to download fragments for local searching.
+    
+    Returns:
+        A JSON object containing all document fragments, their embeddings, and metadata.
+    """
+    try:
+        # Initialize ChromaDB client with the same settings as your RAG system
+        chroma_client = chromadb.PersistentClient(
+            path="./chroma_db"
+        )
+        
+        # Get the collection
+        collection = chroma_client.get_collection(name=collection_name)
+        
+        # Get all documents with their embeddings
+        # Note: 'ids' is always included by default, so we don't need to specify it
+        result = collection.get(
+            include=["documents", "embeddings", "metadatas"]
+        )
+        
+        # Format the response for Flutter
+        fragments = []
+        for i in range(len(result["documents"])):
+            # Convert NumPy array to a regular Python list for JSON serialization
+            embedding = result["embeddings"][i]
+            if hasattr(embedding, 'tolist'):  # Check if it's a NumPy array
+                embedding = embedding.tolist()
+                
+            fragments.append({
+                "id": result["ids"][i],
+                "document_id": result["metadatas"][i].get("document_id", result["ids"][i]),
+                "text": result["documents"][i],
+                "embedding": embedding,
+                "metadata": result["metadatas"][i]
+            })
+        
+        return jsonify({
+            "status": "success",
+            "collection": collection_name,
+            "fragments_count": len(fragments),
+            "fragments": fragments
+        })
+    except Exception as e:
+        app.logger.error(f"Error exporting collection: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error exporting collection: {str(e)}"
+        }), 500
+
+# Optional endpoint to get list of available collections
+@app.route('/api/collections', methods=['GET'])
+def list_collections():
+    """
+    List all available collections in the ChromaDB instance.
+    
+    Returns:
+        A JSON object with a list of collection names.
+    """
+    try:
+        # Initialize ChromaDB client
+        chroma_client = chromadb.PersistentClient(
+            path="./chroma_db"
+        )
+        # chromadb.Client(Settings(
+        #     chroma_db_impl="duckdb+parquet",
+        #     persist_directory=CONFIG["PERSIST_DIR"]
+        # ))
+        
+        collection_names = chroma_client.list_collections()
+        # collection_names = [c.name for c in collections]
+        
+        return jsonify({
+            "status": "success",
+            "collections": collection_names
+        })
+    except Exception as e:
+        app.logger.error(f"Error listing collections: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error listing collections: {str(e)}"
+        }), 500
+
+
 # Iniciar tarea programada
 scheduler = BackgroundScheduler()
 scheduler.add_job(
@@ -641,7 +735,7 @@ scheduler.add_job(
 )
 scheduler.start()
 
-# Asegurarse de detener el scheduler al cerrar la aplicación
+# Detener el scheduler al cerrar la aplicación
 import atexit
 atexit.register(lambda: scheduler.shutdown())
 
