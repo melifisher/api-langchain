@@ -305,13 +305,11 @@ class RAGSystem:
         """
         llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
         
-        # 2. Obtener y analizar feedback similar
+        # Analizar feedback similar
         similar_feedback = self.feedback_db.get_similar_feedback(query)
         
-        # 3. Obtener patrones de aprendizaje global
         learning_patterns = self.feedback_db.extract_feedback_patterns()
         
-        # 4. Construir guía de feedback personalizada
         feedback_guidance = ""
         
         if similar_feedback:
@@ -331,7 +329,6 @@ class RAGSystem:
                     for ex in low_rated_examples[:2]:
                         feedback_guidance += f"- Sean similares a: '{ex['response'][:100]}...'\n"
         
-        # 5. Incorporar patrones de aprendizaje global
         if learning_patterns["positive_patterns"]:
             feedback_guidance += "\nPatrones efectivos identificados:\n"
             for i, pattern in enumerate(learning_patterns["positive_patterns"][:3], 1):
@@ -342,10 +339,10 @@ class RAGSystem:
             for i, pattern in enumerate(learning_patterns["negative_patterns"][:3], 1):
                 feedback_guidance += f"- {pattern}\n"
         
-        # 6. Combinar contenidos de búsqueda
+        # Combinar contenidos de búsqueda
         combined_content = "\n\n".join([item.get("content", "") for item in results])
         
-        # 7. Crear prompt mejorado
+        # Crear prompt
         prompt = f"""
         Actúa como un experto en leyes de tránsito con base en el siguiente texto, el cual es sacado de documentos de leyes de tránsito de Bolivia:
 
@@ -373,8 +370,6 @@ class RAGSystem:
         # 8. Generar respuesta
         respuesta = llm.invoke(prompt)
         
-        # 9. Guardar en caché para futuras referencias
-        cache.add_entry(user_id, query, combined_content, respuesta.content)
         
         return respuesta.content
 
@@ -459,7 +454,6 @@ def search_api():
 
         # Aplicar filtro de normalización de palabras
         reemplazador = filtro_palabras()
-        cache = ContextCache()
         queryFiltrado = reemplazador.reemplazar_palabras(query)   
       
         # Ensure RAG system is initialized
@@ -493,11 +487,6 @@ def search_api():
             results = rag_system.search(queryFiltrado, k=k)
             response_content = rag_system.process_data_result_openIA(results, query, formatted_history)
             newcontext = True
-            
-            # Guardamos este como el nuevo contexto principal
-            cache.clear_user_history(user_id)
-            combined_content = "\n\n".join([item.get("content", "") for item in results])
-            cache.add_entry(user_id, query, combined_content, response_content)
         
         # Generar datos para la respuesta
         return jsonify({
