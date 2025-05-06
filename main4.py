@@ -306,38 +306,38 @@ class RAGSystem:
         llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
         
         # Analizar feedback similar
-        similar_feedback = self.feedback_db.get_similar_feedback(query)
+        # similar_feedback = self.feedback_db.get_similar_feedback(query)
         
-        learning_patterns = self.feedback_db.extract_feedback_patterns()
+        # learning_patterns = self.feedback_db.extract_feedback_patterns()
         
-        feedback_guidance = ""
+        # feedback_guidance = ""
         
-        if similar_feedback:
-            high_rated_examples = [f for f in similar_feedback if f["rating"] >= 4]
-            low_rated_examples = [f for f in similar_feedback if f["rating"] <= 2]
+        # if similar_feedback:
+        #     high_rated_examples = [f for f in similar_feedback if f["rating"] >= 4]
+        #     low_rated_examples = [f for f in similar_feedback if f["rating"] <= 2]
             
-            if high_rated_examples or low_rated_examples:
-                feedback_guidance = "Basado en feedback previo de usuarios:\n"
+        #     if high_rated_examples or low_rated_examples:
+        #         feedback_guidance = "Basado en feedback previo de usuarios:\n"
                 
-                if high_rated_examples:
-                    feedback_guidance += "Los usuarios prefieren respuestas que:\n"
-                    for ex in high_rated_examples[:2]:
-                        feedback_guidance += f"- Sean similares a: '{ex['response'][:100]}...'\n"
+        #         if high_rated_examples:
+        #             feedback_guidance += "Los usuarios prefieren respuestas que:\n"
+        #             for ex in high_rated_examples[:2]:
+        #                 feedback_guidance += f"- Sean similares a: '{ex['response'][:100]}...'\n"
                 
-                if low_rated_examples:
-                    feedback_guidance += "Los usuarios NO prefieren respuestas que:\n"
-                    for ex in low_rated_examples[:2]:
-                        feedback_guidance += f"- Sean similares a: '{ex['response'][:100]}...'\n"
+        #         if low_rated_examples:
+        #             feedback_guidance += "Los usuarios NO prefieren respuestas que:\n"
+        #             for ex in low_rated_examples[:2]:
+        #                 feedback_guidance += f"- Sean similares a: '{ex['response'][:100]}...'\n"
         
-        if learning_patterns["positive_patterns"]:
-            feedback_guidance += "\nPatrones efectivos identificados:\n"
-            for i, pattern in enumerate(learning_patterns["positive_patterns"][:3], 1):
-                feedback_guidance += f"- {pattern}\n"
+        # if learning_patterns["positive_patterns"]:
+        #     feedback_guidance += "\nPatrones efectivos identificados:\n"
+        #     for i, pattern in enumerate(learning_patterns["positive_patterns"][:3], 1):
+        #         feedback_guidance += f"- {pattern}\n"
         
-        if learning_patterns["negative_patterns"]:
-            feedback_guidance += "\nPatrones a evitar:\n"
-            for i, pattern in enumerate(learning_patterns["negative_patterns"][:3], 1):
-                feedback_guidance += f"- {pattern}\n"
+        # if learning_patterns["negative_patterns"]:
+        #     feedback_guidance += "\nPatrones a evitar:\n"
+        #     for i, pattern in enumerate(learning_patterns["negative_patterns"][:3], 1):
+        #         feedback_guidance += f"- {pattern}\n"
         
         # Combinar contenidos de búsqueda
         combined_content = "\n\n".join([item.get("content", "") for item in results])
@@ -364,7 +364,7 @@ class RAGSystem:
         6. Si hay información previa relevante en el historial, úsala para contextualizar
         7. Prioriza la precisión y claridad en la respuesta
         
-        {feedback_guidance}
+        
         """
 
         # 8. Generar respuesta
@@ -599,7 +599,6 @@ def update_data():
             "message": str(e)
         }), 500
 
-# Añadir al main4.py
 from apscheduler.schedulers.background import BackgroundScheduler
 
 def analyze_feedback_periodically():
@@ -622,7 +621,6 @@ def analyze_feedback_periodically():
         logger.error(f"Error en análisis periódico: {str(e)}")
 
 
-# Add this endpoint to your existing Flask application
 
 @app.route('/api/export_fragments/<collection_name>', methods=['GET'])
 def export_fragments(collection_name: str):
@@ -634,26 +632,21 @@ def export_fragments(collection_name: str):
         A JSON object containing all document fragments, their embeddings, and metadata.
     """
     try:
-        # Initialize ChromaDB client with the same settings as your RAG system
         chroma_client = chromadb.PersistentClient(
             path="./chroma_db"
         )
         
-        # Get the collection
         collection = chroma_client.get_collection(name=collection_name)
         
-        # Get all documents with their embeddings
-        # Note: 'ids' is always included by default, so we don't need to specify it
         result = collection.get(
             include=["documents", "embeddings", "metadatas"]
         )
         
-        # Format the response for Flutter
         fragments = []
         for i in range(len(result["documents"])):
             # Convert NumPy array to a regular Python list for JSON serialization
             embedding = result["embeddings"][i]
-            if hasattr(embedding, 'tolist'):  # Check if it's a NumPy array
+            if hasattr(embedding, 'tolist'): 
                 embedding = embedding.tolist()
                 
             fragments.append({
@@ -677,7 +670,6 @@ def export_fragments(collection_name: str):
             "message": f"Error exporting collection: {str(e)}"
         }), 500
 
-# Optional endpoint to get list of available collections
 @app.route('/api/collections', methods=['GET'])
 def list_collections():
     """
@@ -687,7 +679,6 @@ def list_collections():
         A JSON object with a list of collection names.
     """
     try:
-        # Initialize ChromaDB client
         chroma_client = chromadb.PersistentClient(
             path="./chroma_db"
         )
@@ -712,17 +703,17 @@ def list_collections():
 
 
 # Iniciar tarea programada
-scheduler = BackgroundScheduler()
-scheduler.add_job(
-    analyze_feedback_periodically, 
-    'interval', 
-    hours=24  # Ejecutar una vez al día
-)
-scheduler.start()
+# scheduler = BackgroundScheduler()
+# scheduler.add_job(
+#     analyze_feedback_periodically, 
+#     'interval', 
+#     hours=24  # Ejecutar una vez al día
+# )
+# scheduler.start()
 
-# Detener el scheduler al cerrar la aplicación
-import atexit
-atexit.register(lambda: scheduler.shutdown())
+# # Detener el scheduler al cerrar la aplicación
+# import atexit
+# atexit.register(lambda: scheduler.shutdown())
 
 
 if __name__ == '__main__':
