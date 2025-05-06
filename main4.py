@@ -294,7 +294,7 @@ class RAGSystem:
         respuesta = llm.invoke(prompt)
         return respuesta.content
     
-    def process_data_result_openIA(self, results: List[Dict[str, Any]], query: str, user_id: str = "anonymous"):
+    def process_data_result_openIA(self, results: List[Dict[str, Any]], query: str, conversation_history: str):
         """
         Process the search results with OpenAI, incorporating feedback and continual learning
         
@@ -304,10 +304,6 @@ class RAGSystem:
             user_id: ID del usuario para tracking
         """
         llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
-        
-        # 1. Obtener contexto de conversación
-        cache = ContextCache()
-        conversation_history = cache.generate_conversation_summary(user_id)
         
         # 2. Obtener y analizar feedback similar
         similar_feedback = self.feedback_db.get_similar_feedback(query)
@@ -495,7 +491,7 @@ def search_api():
             # Nueva conversación o cambio de tema
             logger.info(f"Nuevo contexto de conversación o cambio de tema")
             results = rag_system.search(queryFiltrado, k=k)
-            response_content = rag_system.process_data_result_openIA(results, query, user_id)
+            response_content = rag_system.process_data_result_openIA(results, query, formatted_history)
             newcontext = True
             
             # Guardamos este como el nuevo contexto principal
