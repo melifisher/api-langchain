@@ -150,12 +150,6 @@ class RAGSystem:
             bool: True si la nueva pregunta está en contexto
         """
         
-        # 2. Para casos intermedios, usamos el LLM para un análisis semántico profundo
-        # Sistema de votación: combinamos resultados de embeddings y LLM
-        votes = 0
-        
-        
-        # Análisis semántico con LLM para casos difíciles
         mensajes = [
             SystemMessage(
                 content="""Eres un clasificador experto en determinar si una nueva pregunta está relacionada 
@@ -191,12 +185,7 @@ class RAGSystem:
         logger.info(f"Pregunta anterior: {prev_question}. Nueva pregunta: {new_question}")
         logger.info(f"Respuesta del clasificador: {respuesta.content}")
         
-        if "relacionado" in respuesta.content.lower():
-            votes += 2  # El LLM tiene más peso en la decisión
-        
-        # Sistema de votación final
-        # Si embeddings y LLM concuerdan, o si el LLM está muy seguro (2 votos)
-        return votes >= 2
+        return "relacionado" in respuesta.content.lower()
     
     def get_similarity(self, text1: str, text2: str) -> float:
         """
@@ -210,30 +199,6 @@ class RAGSystem:
         emb2 = embedder.embed_query(text2)
         return cosine_similarity([emb1], [emb2])[0][0]
 
-    def in_context_embeddings(self, prev_question: str, new_question: str, answerfull: str) -> bool:
-        """
-        Determina si una nueva pregunta está en contexto usando embeddings.
-        
-        Args:
-            prev_question: Pregunta anterior en la conversación
-            new_question: Nueva pregunta a evaluar
-            answerfull: Respuesta completa relacionada
-            
-        Returns:
-            bool: True si la nueva pregunta está en contexto
-        """
-        threshold: float = 0.8,
-        # Calcula similitudes
-        sim_questions = self.get_similarity(prev_question, new_question)
-        sim_new_to_answer = self.get_similarity(new_question, answerfull)
-        
-        # Puntuación combinada ponderada
-        weights = (0.6, 0.4)
-        combined_score = (weights[0] * sim_questions + 
-                         weights[1] * sim_new_to_answer)
-        
-        return combined_score >= threshold
-    
     def process_data_result_openIA_Continue_Context(self, results: str, query: str, oldquery :str, formatted_history : str):
         """Process the search results with OpenAI, incorporating feedback and Continue Context Using Old Anaswers of question Initial (lee fisher :U)."""
         llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
@@ -301,7 +266,6 @@ class RAGSystem:
         Args:
             results: Resultados de la búsqueda vectorial
             query: Consulta del usuario
-            user_id: ID del usuario para tracking
         """
         llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
         
@@ -367,9 +331,7 @@ class RAGSystem:
         
         """
 
-        # 8. Generar respuesta
         respuesta = llm.invoke(prompt)
-        
         
         return respuesta.content
 
@@ -444,7 +406,6 @@ def search_api():
             
         query = data["query"]
         k = data.get("k", 5) 
-        user_id = data.get("user_id", "anonymous")  # Añadir identificación de usuario
         old_question = data.get("oldquestion", "").strip()
         old_response_full = data.get("oldresponsefull", "").strip()
         hay_contexto = bool(old_question) and bool(old_response_full)
@@ -460,7 +421,7 @@ def search_api():
         if not rag_system.vectorstore:
             rag_system.initialize()
         
-        # Generate unique identifier for this response
+        # Genera identificador
         response_id = hashlib.md5(f"{query}-{time.time()}".encode()).hexdigest()
         
         newcontext = True
@@ -496,8 +457,7 @@ def search_api():
             "result_count": len(results),
             "response": response_content,
             "response_id": response_id,
-            "isnewcontext": newcontext,
-            "user_id": user_id
+            "isnewcontext": newcontext
         })
     except Exception as e:
         logger.error(f"Search error: {str(e)}")

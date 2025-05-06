@@ -14,18 +14,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class FeedbackDB:
-    """Class to handle feedback storage and retrieval"""
     def __init__(self, db_path="feedback.db"):
         """Initialize the feedback database"""
         self.db_path = db_path
         self._init_db()
     
     def _init_db(self):
-        """Create the feedback table if it doesn't exist"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Create table for storing feedback
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS feedback (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,11 +39,9 @@ class FeedbackDB:
         logger.info(f"Feedback database initialized at {self.db_path}")
     
     def save_feedback(self, query: str, response: str, rating: int, contexts: List[Dict]):
-        """Save feedback for a response"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Save the feedback
         cursor.execute(
             "INSERT INTO feedback (query, response, rating, contexts) VALUES (?, ?, ?, ?)",
             (query, response, rating, json.dumps(contexts))
@@ -58,9 +53,6 @@ class FeedbackDB:
         return True
     
     def get_similar_feedback(self, query: str, limit=5):
-        """
-        Get feedback for similar queries using embeddings similarity
-        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -79,7 +71,7 @@ class FeedbackDB:
         results = []
         for fb_query, fb_response, fb_rating, fb_contexts in all_feedback:
             try:
-                # Calcular similitud por embeddings (más preciso que palabras)
+                # Calcular similitud por embeddings
                 fb_embedding = embeddings.embed_query(fb_query)
                 similarity = cosine_similarity([query_embedding], [fb_embedding])[0][0]
                 
