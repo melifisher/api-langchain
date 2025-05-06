@@ -2,7 +2,6 @@ import os
 import time
 import hashlib
 import logging
-import sqlite3
 import json
 from typing import List, Dict, Any, Optional
 from flask import Flask, request, jsonify
@@ -16,7 +15,16 @@ from langchain_core.documents import Document
 
 from langchain_openai import ChatOpenAI
 from filtro import filtro_palabras
+from contextcache import ContextCache
+from feedback import FeedbackDB
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
 
+import chromadb
+from chromadb.config import Settings
+import numpy as np
+
+from sklearn.metrics.pairwise import cosine_similarity
 # Load environment variables
 load_dotenv()
 
@@ -28,110 +36,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class FeedbackDB:
-    """Class to handle feedback storage and retrieval"""
-    def __init__(self, db_path="feedback.db"):
-        """Initialize the feedback database"""
-        self.db_path = db_path
-        self._init_db()
-    
-    def _init_db(self):
-        """Create the feedback table if it doesn't exist"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Create table for storing feedback
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS feedback (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            query TEXT NOT NULL,
-            response TEXT NOT NULL,
-            rating INTEGER NOT NULL,
-            contexts TEXT NOT NULL,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
-        
-        conn.commit()
-        conn.close()
-        logger.info(f"Feedback database initialized at {self.db_path}")
-    
-    def save_feedback(self, query: str, response: str, rating: int, contexts: List[Dict]):
-        """Save feedback for a response"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Save the feedback
-        cursor.execute(
-            "INSERT INTO feedback (query, response, rating, contexts) VALUES (?, ?, ?, ?)",
-            (query, response, rating, json.dumps(contexts))
-        )
-        
-        conn.commit()
-        conn.close()
-        logger.info(f"Saved feedback (rating: {rating}) for query: {query[:50]}...")
-        return True
-    
-    def get_similar_feedback(self, query: str, limit=5):
-        """
-        Get feedback for similar queries
-        Simple implementation using substring matching
-        In a production system, this would use embeddings similarity
-        """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Simple approach: look for queries containing similar keywords
-        words = set(query.lower().split())
-        results = []
-        
-        cursor.execute("SELECT query, response, rating, contexts FROM feedback ORDER BY timestamp DESC")
-        all_feedback = cursor.fetchall()
-        
-        for fb_query, fb_response, fb_rating, fb_contexts in all_feedback:
-            fb_words = set(fb_query.lower().split())
-            # Calculate basic similarity (intersection of words)
-            similarity = len(words.intersection(fb_words)) / max(len(words), 1)
-            if similarity > 0.3:  # Arbitrary threshold
-                results.append({
-                    "query": fb_query,
-                    "response": fb_response,
-                    "rating": fb_rating,
-                    "contexts": json.loads(fb_contexts),
-                    "similarity": similarity
-                })
-                if len(results) >= limit:
-                    break
-        
-        conn.close()
-        return results
-    
-    def get_feedback_stats(self):
-        """Get statistics about the feedback"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT COUNT(*) as total FROM feedback")
-        total = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT AVG(rating) as avg_rating FROM feedback")
-        avg_rating = cursor.fetchone()[0] or 0
-        
-        cursor.execute("""
-            SELECT rating, COUNT(*) as count 
-            FROM feedback 
-            GROUP BY rating 
-            ORDER BY rating DESC
-        """)
-        rating_distribution = {rating: count for rating, count in cursor.fetchall()}
-        
-        conn.close()
-        
-        return {
-            "total_feedback": total,
-            "average_rating": round(avg_rating, 2),
-            "rating_distribution": rating_distribution
-        }
 
 class RAGSystem:
     def __init__(
@@ -230,9 +134,73 @@ class RAGSystem:
             })
             
         return results
+
+    def in_context(self, prev_question: str, new_question: str, answerfull: str, formatted_history: str) -> bool:
+        """
+        Determina si una nueva pregunta está en el mismo contexto que la anterior
+        utilizando un enfoque híbrido de embeddings y LLM
+        
+        Args:
+            prev_question: Pregunta anterior en la conversación
+            new_question: Nueva pregunta del usuario
+            answerfull: Respuesta completa a la pregunta anterior
+            formatted_history: Historial formateado de la conversación
+            
+        Returns:
+            bool: True si la nueva pregunta está en contexto
+        """
+        
+        mensajes = [
+            SystemMessage(
+                content="""Eres un clasificador experto en determinar si una nueva pregunta está relacionada 
+                con la conversación anterior. Tu trabajo es analizar si la nueva pregunta:
+                1. Es una continuación natural del tema anterior
+                2. Solicita clarificación o detalles adicionales sobre lo discutido
+                3. Se refiere a conceptos mencionados previamente
+                4. Está completamente fuera de contexto
+                
+                Responde únicamente con "Relacionado" o "Nuevo tema"."""
+                        ),
+            HumanMessage(
+                content=f"""
+                Analiza cuidadosamente si la nueva pregunta está relacionada con el contexto previo.
+                
+                Pregunta anterior: "{prev_question}"
+                Nueva pregunta: "{new_question}"
+                
+                Respuesta anterior: 
+                {answerfull}
+                
+                Historial de conversación previo:
+                {formatted_history}
+                
+                ¿La nueva pregunta está relacionada con el contexto actual o es un tema nuevo?
+                """
+            )
+        ]
+
+        llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
+        respuesta = llm.invoke(mensajes)
+        
+        logger.info(f"Pregunta anterior: {prev_question}. Nueva pregunta: {new_question}")
+        logger.info(f"Respuesta del clasificador: {respuesta.content}")
+        
+        return "relacionado" in respuesta.content.lower()
     
-    def proces_data_result_openIA(self, results: List[Dict[str, Any]], query: str):
-        """Process the search results with OpenAI, incorporating feedback."""
+    def get_similarity(self, text1: str, text2: str) -> float:
+        """
+        Calcula la similitud coseno entre dos textos usando embeddings.
+        
+        """
+        model_name: str = "text-embedding-3-small",
+        
+        embedder = self.embeddings
+        emb1 = embedder.embed_query(text1)
+        emb2 = embedder.embed_query(text2)
+        return cosine_similarity([emb1], [emb2])[0][0]
+
+    def process_data_result_openIA_Continue_Context(self, results: str, query: str, oldquery :str, formatted_history : str):
+        """Process the search results with OpenAI, incorporating feedback and Continue Context Using Old Anaswers of question Initial (lee fisher :U)."""
         llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
         
         # Get similar feedback to influence the response
@@ -258,24 +226,32 @@ class RAGSystem:
                         feedback_guidance += f"- Sean similares a: '{ex['response'][:100]}...'\n"
         
         # Combina todos los contenidos en un solo string
-        combined_content = "\n\n".join([item.get("content", "") for item in results])
+        combined_content =  results
 
         # Crear el prompt con todos los contenidos juntos y el feedback
         prompt = f"""
         Actua como un experto en leyes de tránsito con base en el siguiente texto, el cual es sacado de documentos de leyes de transito de Bolivia:
 
         \"\"\"{combined_content}\"\"\"
-
+        
         Responde a la siguiente pregunta del usuario:
 
         \"{query}\"
+
+        Tomando en cuenta que esta era la anterior pregunta:
+
+        \"{oldquery}\"
          
         Instrucciones adicionales:
         1. Responde con hechos basados en la información proporcionada
         2. Mantén un tono profesional
         3. Limita tu respuesta a 150 palabras máximo
         4. Si tiene Articulo, nombralo
-        5. Solo responde a la pregunta
+        5. Solo responde a la pregunta del usuario
+        6. La Pregunta es la continuacion al contexto de la pregunta principal
+        7. si es necesario Basa tu respuesta en este contexto previo 
+        
+        Contexto previo:\n{formatted_history}
         
         {feedback_guidance}
         """
@@ -283,6 +259,81 @@ class RAGSystem:
         respuesta = llm.invoke(prompt)
         return respuesta.content
     
+    def process_data_result_openIA(self, results: List[Dict[str, Any]], query: str, conversation_history: str):
+        """
+        Process the search results with OpenAI, incorporating feedback and continual learning
+        
+        Args:
+            results: Resultados de la búsqueda vectorial
+            query: Consulta del usuario
+        """
+        llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
+        
+        # Analizar feedback similar
+        # similar_feedback = self.feedback_db.get_similar_feedback(query)
+        
+        # learning_patterns = self.feedback_db.extract_feedback_patterns()
+        
+        # feedback_guidance = ""
+        
+        # if similar_feedback:
+        #     high_rated_examples = [f for f in similar_feedback if f["rating"] >= 4]
+        #     low_rated_examples = [f for f in similar_feedback if f["rating"] <= 2]
+            
+        #     if high_rated_examples or low_rated_examples:
+        #         feedback_guidance = "Basado en feedback previo de usuarios:\n"
+                
+        #         if high_rated_examples:
+        #             feedback_guidance += "Los usuarios prefieren respuestas que:\n"
+        #             for ex in high_rated_examples[:2]:
+        #                 feedback_guidance += f"- Sean similares a: '{ex['response'][:100]}...'\n"
+                
+        #         if low_rated_examples:
+        #             feedback_guidance += "Los usuarios NO prefieren respuestas que:\n"
+        #             for ex in low_rated_examples[:2]:
+        #                 feedback_guidance += f"- Sean similares a: '{ex['response'][:100]}...'\n"
+        
+        # if learning_patterns["positive_patterns"]:
+        #     feedback_guidance += "\nPatrones efectivos identificados:\n"
+        #     for i, pattern in enumerate(learning_patterns["positive_patterns"][:3], 1):
+        #         feedback_guidance += f"- {pattern}\n"
+        
+        # if learning_patterns["negative_patterns"]:
+        #     feedback_guidance += "\nPatrones a evitar:\n"
+        #     for i, pattern in enumerate(learning_patterns["negative_patterns"][:3], 1):
+        #         feedback_guidance += f"- {pattern}\n"
+        
+        # Combinar contenidos de búsqueda
+        combined_content = "\n\n".join([item.get("content", "") for item in results])
+        
+        # Crear prompt
+        prompt = f"""
+        Actúa como un experto en leyes de tránsito con base en el siguiente texto, el cual es sacado de documentos de leyes de tránsito de Bolivia:
+
+        \"\"\"{combined_content}\"\"\"
+
+        Responde a la siguiente pregunta del usuario:
+
+        \"{query}\"
+        
+        Resumen de la conversacion:
+        {conversation_history}
+        
+        Instrucciones adicionales:
+        1. Responde con hechos basados en la información proporcionada
+        2. Mantén un tono profesional y preciso
+        3. Limita tu respuesta a 150 palabras máximo
+        4. Si corresponde a un Artículo específico, cítalo explícitamente
+        5. Enfócate específicamente en responder la pregunta actual
+        6. Si hay información previa relevante en el historial, úsala para contextualizar
+        7. Prioriza la precisión y claridad en la respuesta
+        
+        
+        """
+
+        respuesta = llm.invoke(prompt)
+        
+        return respuesta.content
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -355,7 +406,14 @@ def search_api():
             
         query = data["query"]
         k = data.get("k", 5) 
+        old_question = data.get("oldquestion", "").strip()
+        old_response_full = data.get("oldresponsefull", "").strip()
+        hay_contexto = bool(old_question) and bool(old_response_full)
+        
+        history = data.get("summaries", [])
+        formatted_history = "\n \n".join(history)
 
+        # Aplicar filtro de normalización de palabras
         reemplazador = filtro_palabras()
         queryFiltrado = reemplazador.reemplazar_palabras(query)   
       
@@ -363,20 +421,43 @@ def search_api():
         if not rag_system.vectorstore:
             rag_system.initialize()
         
-        # Generate unique identifier for this response
+        # Genera identificador
         response_id = hashlib.md5(f"{query}-{time.time()}".encode()).hexdigest()
         
-        # Perform search
-        results = rag_system.search(queryFiltrado, k=k)
-        response_content = rag_system.proces_data_result_openIA(results, query)
+        newcontext = True
+        incontext = False
         
+        # Verificar si hay contexto previo y si la nueva pregunta sigue ese contexto
+        if hay_contexto:
+            incontext = rag_system.in_context(old_question, queryFiltrado, old_response_full, formatted_history)
+        
+        if hay_contexto and incontext: 
+            # Si estamos en el mismo contexto, expandimos la pregunta y buscamos más resultados
+            logger.info(f"Detectado contexto continuo. Expandiendo búsqueda.")
+            combined_query = f"{old_question} {queryFiltrado}"  # Combinar preguntas
+            results = rag_system.search(combined_query, k=k+3)
+            combined_content = "\n\n".join([item.get("content", "") for item in results])
+            
+            # Procesar con contexto continuo
+            response_content = rag_system.process_data_result_openIA_Continue_Context(
+                combined_content, query, old_question, formatted_history)
+            newcontext = False
+        else:
+            # Nueva conversación o cambio de tema
+            logger.info(f"Nuevo contexto de conversación o cambio de tema")
+            results = rag_system.search(queryFiltrado, k=k)
+            response_content = rag_system.process_data_result_openIA(results, query, formatted_history)
+            newcontext = True
+        
+        # Generar datos para la respuesta
         return jsonify({
             "status": "success",
             "query": query,
             "results": results,
             "result_count": len(results),
             "response": response_content,
-            "response_id": response_id
+            "response_id": response_id,
+            "isnewcontext": newcontext
         })
     except Exception as e:
         logger.error(f"Search error: {str(e)}")
@@ -477,6 +558,123 @@ def update_data():
             "status": "error",
             "message": str(e)
         }), 500
+
+from apscheduler.schedulers.background import BackgroundScheduler
+
+def analyze_feedback_periodically():
+    """
+    Función que se ejecuta periódicamente para analizar feedback
+    y actualizar los patrones de aprendizaje
+    """
+    try:
+        logger.info("Iniciando análisis periódico de feedback")
+        
+        # Extraer y procesar patrones de feedback
+        patterns = rag_system.feedback_db.extract_feedback_patterns()
+        
+        with open("learning_patterns.json", "w") as f:
+            json.dump(patterns, f, indent=2)
+            
+        logger.info(f"Análisis completo. Patrones positivos: {len(patterns['positive_patterns'])}, " +
+                   f"Patrones negativos: {len(patterns['negative_patterns'])}")
+    except Exception as e:
+        logger.error(f"Error en análisis periódico: {str(e)}")
+
+
+
+@app.route('/api/export_fragments/<collection_name>', methods=['GET'])
+def export_fragments(collection_name: str):
+    """
+    Export document fragments with their embeddings for a specific collection.
+    This endpoint allows the Flutter app to download fragments for local searching.
+    
+    Returns:
+        A JSON object containing all document fragments, their embeddings, and metadata.
+    """
+    try:
+        chroma_client = chromadb.PersistentClient(
+            path="./chroma_db"
+        )
+        
+        collection = chroma_client.get_collection(name=collection_name)
+        
+        result = collection.get(
+            include=["documents", "embeddings", "metadatas"]
+        )
+        
+        fragments = []
+        for i in range(len(result["documents"])):
+            # Convert NumPy array to a regular Python list for JSON serialization
+            embedding = result["embeddings"][i]
+            if hasattr(embedding, 'tolist'): 
+                embedding = embedding.tolist()
+                
+            fragments.append({
+                "id": result["ids"][i],
+                "document_id": result["metadatas"][i].get("document_id", result["ids"][i]),
+                "text": result["documents"][i],
+                "embedding": embedding,
+                "metadata": result["metadatas"][i]
+            })
+        
+        return jsonify({
+            "status": "success",
+            "collection": collection_name,
+            "fragments_count": len(fragments),
+            "fragments": fragments
+        })
+    except Exception as e:
+        app.logger.error(f"Error exporting collection: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error exporting collection: {str(e)}"
+        }), 500
+
+@app.route('/api/collections', methods=['GET'])
+def list_collections():
+    """
+    List all available collections in the ChromaDB instance.
+    
+    Returns:
+        A JSON object with a list of collection names.
+    """
+    try:
+        chroma_client = chromadb.PersistentClient(
+            path="./chroma_db"
+        )
+        # chromadb.Client(Settings(
+        #     chroma_db_impl="duckdb+parquet",
+        #     persist_directory=CONFIG["PERSIST_DIR"]
+        # ))
+        
+        collection_names = chroma_client.list_collections()
+        # collection_names = [c.name for c in collections]
+        
+        return jsonify({
+            "status": "success",
+            "collections": collection_names
+        })
+    except Exception as e:
+        app.logger.error(f"Error listing collections: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error listing collections: {str(e)}"
+        }), 500
+
+
+# Iniciar tarea programada
+# scheduler = BackgroundScheduler()
+# scheduler.add_job(
+#     analyze_feedback_periodically, 
+#     'interval', 
+#     hours=24  # Ejecutar una vez al día
+# )
+# scheduler.start()
+
+# # Detener el scheduler al cerrar la aplicación
+# import atexit
+# atexit.register(lambda: scheduler.shutdown())
+
 
 if __name__ == '__main__':
     # Initialize before starting the server
