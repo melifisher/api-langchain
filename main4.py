@@ -203,28 +203,6 @@ class RAGSystem:
         """Process the search results with OpenAI, incorporating feedback and Continue Context Using Old Anaswers of question Initial (lee fisher :U)."""
         llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
         
-        # Get similar feedback to influence the response
-        similar_feedback = self.feedback_db.get_similar_feedback(query)
-        feedback_guidance = ""
-        
-        if similar_feedback:
-            # Extract learnings from previous feedback
-            high_rated_examples = [f for f in similar_feedback if f["rating"] >= 4]
-            low_rated_examples = [f for f in similar_feedback if f["rating"] <= 2]
-            
-            if high_rated_examples or low_rated_examples:
-                feedback_guidance = "Basado en feedback previo de usuarios:\n"
-                
-                if high_rated_examples:
-                    feedback_guidance += "Los usuarios prefieren respuestas que:\n"
-                    for ex in high_rated_examples[:2]:
-                        feedback_guidance += f"- Sean similares a: '{ex['response'][:100]}...'\n"
-                
-                if low_rated_examples:
-                    feedback_guidance += "Los usuarios NO prefieren respuestas que:\n"
-                    for ex in low_rated_examples[:2]:
-                        feedback_guidance += f"- Sean similares a: '{ex['response'][:100]}...'\n"
-        
         # Combina todos los contenidos en un solo string
         combined_content =  results
 
@@ -252,8 +230,6 @@ class RAGSystem:
         7. si es necesario Basa tu respuesta en este contexto previo 
         
         Contexto previo:\n{formatted_history}
-        
-        {feedback_guidance}
         """
 
         respuesta = llm.invoke(prompt)
@@ -558,28 +534,6 @@ def update_data():
             "status": "error",
             "message": str(e)
         }), 500
-
-from apscheduler.schedulers.background import BackgroundScheduler
-
-def analyze_feedback_periodically():
-    """
-    Función que se ejecuta periódicamente para analizar feedback
-    y actualizar los patrones de aprendizaje
-    """
-    try:
-        logger.info("Iniciando análisis periódico de feedback")
-        
-        # Extraer y procesar patrones de feedback
-        patterns = rag_system.feedback_db.extract_feedback_patterns()
-        
-        with open("learning_patterns.json", "w") as f:
-            json.dump(patterns, f, indent=2)
-            
-        logger.info(f"Análisis completo. Patrones positivos: {len(patterns['positive_patterns'])}, " +
-                   f"Patrones negativos: {len(patterns['negative_patterns'])}")
-    except Exception as e:
-        logger.error(f"Error en análisis periódico: {str(e)}")
-
 
 
 @app.route('/api/export_fragments/<collection_name>', methods=['GET'])

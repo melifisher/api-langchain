@@ -1,18 +1,17 @@
-flask>=2.0.0
-flask-cors>=3.0.10
-python-dotenv>=0.19.0
+flask
+flask-cors
+python-dotenv
 
-langchain>=0.0.267
-langchain-community>=0.0.10
-langchain-core>=0.0.10
-langchain-text-splitters>=0.0.1
-langchain-chroma>=0.0.1
-langchain-openai>=0.0.1
+langchain
+langchain-community
+langchain-core
+langchain-text-splitters
+langchain-chroma
+langchain-openai
 
-chromadb>=0.4.6
+chromadb
 
-openai>=1.0.0
+openai
 
-sqlite3
-
-typing-extensions>=4.0.0
+typing-extensions
+scikit-learn
